@@ -9,25 +9,29 @@ export class HttpError extends Error {
 
 // Clean up common issues with Copilot parameters
 export function cleanUpParameter(name: string, value: string): string {
-
+  // Normalize value once to avoid repeated toLowerCase() calls
   let val = value.toLowerCase();
-  if (val.toLowerCase().includes("trey") || val.toLowerCase().includes("research")) {
+  
+  if (val.includes("trey") || val.includes("research")) {
     const newVal = val.replace("trey", "").replace("research", "").trim();
     console.log(`   ❗ Plugin name detected in the ${name} parameter '${val}'; replacing with '${newVal}'.`);
     val = newVal;
   }
+  
   if (val === "<user_name>") {
     console.log(`   ❗ Invalid name '${val}'; replacing with 'avery'.`);
     val = "avery";
   }
-  if (name==="role" && val === "consultant") {
+  
+  if (name === "role" && val === "consultant") {
     console.log(`   ❗ Invalid role name '${val}'; replacing with ''.`);
     val = "";
   }
+  
   if (val === "null") {
     console.log(`   ❗ Invalid value '${val}'; replacing with ''.`);
     val = "";
   }
+  
   return val;
-
 }
