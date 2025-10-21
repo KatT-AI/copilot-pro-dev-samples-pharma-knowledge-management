@@ -5,8 +5,23 @@
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { jwtDecode, JwtPayload } from "jwt-decode";
+import performanceMonitor from "../utils/performance-monitor";
+import cache from "../utils/cache";
 
 import repairRecords from "../repairsData.json";
+
+interface RepairRecord {
+  id: string;
+  title: string;
+  description: string;
+  assignedTo: string;
+  date: string;
+  image: string;
+}
+
+interface AuthToken extends JwtPayload {
+  scp?: string;
+}
 
 /**
  * This function handles the HTTP request and returns the repair information.
@@ -19,62 +34,88 @@ export async function repairs(
   req: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
-  context.log("HTTP trigger function processed a request.");
+  return performanceMonitor.measure('repairs-function', () => {
+    context.log("HTTP trigger function processed a request.");
 
-  if (!hasRequiredScopes(req, 'repairs_read')) {
+    // Validate authorization
+    if (!hasRequiredScopes(req, 'repairs_read')) {
+      return {
+        status: 403,
+        jsonBody: { error: "Insufficient permissions" },
+      };
+    }
+
+    const assignedTo = req.query.get("assignedTo");
+    
+    // If no filter, return all records (cached)
+    if (!assignedTo) {
+      const cacheKey = 'all-repairs';
+      let allRepairs = cache.get<RepairRecord[]>(cacheKey);
+      
+      if (!allRepairs) {
+        allRepairs = repairRecords as RepairRecord[];
+        cache.set(cacheKey, allRepairs, 10 * 60 * 1000); // Cache for 10 minutes
+      }
+
+      return {
+        status: 200,
+        jsonBody: { results: allRepairs },
+      };
+    }
+
+    // Filter repairs by assignedTo with caching
+    const cacheKey = `repairs-${assignedTo.toLowerCase()}`;
+    let filteredRepairs = cache.get<RepairRecord[]>(cacheKey);
+    
+    if (!filteredRepairs) {
+      filteredRepairs = performanceMonitor.measure('filter-repairs', () => {
+        const query = assignedTo.trim().toLowerCase();
+        return (repairRecords as RepairRecord[]).filter((item) => {
+          const fullName = item.assignedTo.toLowerCase();
+          const nameParts = fullName.split(/\s+/);
+          
+          // Check exact match, first name, last name, or partial matches
+          return fullName.includes(query) || 
+                 nameParts.some(part => part.startsWith(query));
+        });
+      }, { query: assignedTo, totalRecords: repairRecords.length });
+      
+      // Cache filtered results for 5 minutes
+      cache.set(cacheKey, filteredRepairs, 5 * 60 * 1000);
+    }
+
     return {
-      status: 403,
-      body: "Insufficient permissions",
+      status: 200,
+      jsonBody: { results: filteredRepairs },
     };
-  }
-
-  // Initialize response.
-  const res: HttpResponseInit = {
-    status: 200,
-    jsonBody: {
-      results: repairRecords,
-    },
-  };
-
-  // Get the assignedTo query parameter.
-  const assignedTo = req.query.get("assignedTo");
-
-  // If the assignedTo query parameter is not provided, return the response.
-  if (!assignedTo) {
-    return res;
-  }
-
-  // Filter the repair information by the assignedTo query parameter.
-  const repairs = repairRecords.filter((item) => {
-    const fullName = item.assignedTo.toLowerCase();
-    const query = assignedTo.trim().toLowerCase();
-    const [firstName, lastName] = fullName.split(" ");
-    return fullName === query || firstName === query || lastName === query;
-  });
-
-  // Return filtered repair records, or an empty array if no records were found.
-  res.jsonBody.results = repairs ?? [];
-  return res;
+  }, { method: req.method, hasFilter: !!req.query.get("assignedTo") });
 }
 
 function hasRequiredScopes(req: HttpRequest, requiredScopes: string[] | string): boolean {
-  if (typeof requiredScopes === "string") {
-    requiredScopes = [requiredScopes];
-  }
+  return performanceMonitor.measure('auth-validation', () => {
+    if (typeof requiredScopes === "string") {
+      requiredScopes = [requiredScopes];
+    }
 
-  const token = req.headers.get("Authorization")?.split(" ");
-  if (!token || token[0] !== "Bearer") {
-    return false;
-  }
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return false;
+    }
 
-  try {
-    const decodedToken = jwtDecode<JwtPayload & { scp?: string }>(token[1]);
-    const scopes = decodedToken.scp?.split(" ") ?? [];
-    return requiredScopes.every(scope => scopes.includes(scope));
-  }
-  catch (error) {
-    return false;
-  }
+    const token = authHeader.split(" ");
+    if (token.length !== 2 || token[0] !== "Bearer") {
+      return false;
+    }
+
+    try {
+      const decodedToken = jwtDecode<AuthToken>(token[1]);
+      const scopes = decodedToken.scp?.split(" ") ?? [];
+      return (requiredScopes as string[]).every(scope => scopes.includes(scope));
+    } catch (error) {
+      console.warn("JWT decode error:", error);
+      return false;
+    }
+  }, { requiredScopes });
 }
 
 app.http("repairs", {

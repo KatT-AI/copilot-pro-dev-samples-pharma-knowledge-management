@@ -1,7 +1,8 @@
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { HttpError } from "../services/utilities";
-import IncidentsApiService from "../services/snow_incidents";
+import { getIncidentsService } from "../services/index";
+import performanceMonitor from "../utils/performance-monitor";
 
 /**
  * This function handles the HTTP request and returns the incidents information.
@@ -15,15 +16,19 @@ export async function incidents(
   context: InvocationContext
 ): Promise<HttpResponseInit> {
   
-  // Initialize response.
-  const res: HttpResponseInit = {
-    status: 200,
-    jsonBody: {
-      results: [],
-    },
-  };
+  return performanceMonitor.measureAsync('incidents-function', async () => {
+    // Initialize response.
+    const res: HttpResponseInit = {
+      status: 200,
+      jsonBody: {
+        results: [],
+      },
+    };
 
-  try {
+    try {
+      // Lazy load the incidents service
+      const incidentsService = await getIncidentsService();
+      
       // Get input parameters.
       const id = req.params?.id; // Incident ID
       // Need to implement authentication to get the address from context, for now lets use Fred Luddy as the current user
@@ -36,15 +41,15 @@ export async function incidents(
           if (id) {
             // Fetch the incident from the ServiceNow API.
             console.log(`➡️ GET /api/incidents/${id}: `);
-            const incident = await IncidentsApiService.getIncident(id);
+            const incident = await incidentsService.getIncident(id);
             res.jsonBody.results = incident ?? [];
-            console.log(`   ✅ GET /api/incidents${id}: response status ${res.status}; ${incident.length} incidents returned`);
+            console.log(`   ✅ GET /api/incidents/${id}: response status ${res.status}; ${incident.length} incidents returned`);
             return res;
           }
 
           // Fetch all incidents from the ServiceNow API.
           console.log(`➡️ GET /api/incidents: `);
-          const incidents = await IncidentsApiService.getIncidents();
+          const incidents = await incidentsService.getIncidents();
           res.jsonBody.results = incidents ?? [];
           console.log(`   ✅ GET /api/incidents: response status ${res.status}; ${incidents.length} incidents returned`);
           return res;
@@ -60,7 +65,7 @@ export async function incidents(
           if (body) {
             // Create a new incident in ServiceNow.
             console.log(`➡️ POST /api/incidents: `);
-            const incident = await IncidentsApiService.createIncident(email, body["short_description"], body["description"]);
+            const incident = await incidentsService.createIncident(email, body["short_description"], body["description"]);
             res.jsonBody.results = incident ?? [];
             console.log(`   ✅ POST /api/incidents: response status ${res.status}; ${incident.number} incident created!`);
             return res;
@@ -71,13 +76,13 @@ export async function incidents(
         }
       }
 
-  }
-  catch (error) {
-    console.error(`   ❌ GET /api/incidents: ${error}`);
-    res.status = 500;
-    res.jsonBody = { error: error.message };
-    return res;
-  }
+    } catch (error) {
+      console.error(`   ❌ /api/incidents: ${error}`);
+      res.status = 500;
+      res.jsonBody = { error: error.message };
+      return res;
+    }
+  }, { method: req.method, hasId: !!req.params?.id });
 
 }
 

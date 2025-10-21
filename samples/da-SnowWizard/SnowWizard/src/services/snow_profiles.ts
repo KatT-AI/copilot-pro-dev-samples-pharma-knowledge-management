@@ -1,52 +1,56 @@
 //Uses the ServiceNow Rest API to deal with profile information
 //Author: crisag@microsoft.com
 
-import axios from 'axios';
-import * as dotenv from 'dotenv';
+import httpClient from '../utils/http-client';
+import cache from '../utils/cache';
 
-dotenv.config({ path: 'env/.env.local.user' });
+interface ServiceNowProfile {
+    sys_id: string;
+    email: string;
+    name: string;
+    first_name: string;
+    last_name: string;
+    department: string;
+    title: string;
+}
+
+interface ServiceNowResponse<T> {
+    result: T;
+}
 
 class ProfilesApiService {
-    
-    private SN_INSTANCE: string;
-    private SN_USERNAME: string;
-    private SN_PASSWORD: string;
+    private readonly PROFILE_FIELDS = 'sys_id,email,name,first_name,last_name,department,title';
+    private readonly PROFILE_CACHE_TTL = 15 * 60 * 1000; // 15 minutes for profiles
 
-    constructor() {
-        // Environment variables setup
-        this.SN_INSTANCE = process.env.SN_INSTANCE || '';
-        this.SN_USERNAME = process.env.SN_USERNAME || '';
-        this.SN_PASSWORD = process.env.SN_PASSWORD || '';
-    }
-
-    // Function to fetch the latest 10 incidents from ServiceNow
-    async getProfile(email: string) {
-    try {
-        const response = await axios.get(
-        `https://${this.SN_INSTANCE}.service-now.com/api/now/table/sys_user`,
-        {
-            params: {
-            sysparm_limit: 10,
-            sysparm_query: `email=${email}`
-            },
-            auth: {
-            username: this.SN_USERNAME,
-            password: this.SN_PASSWORD
-            },
-            headers: {
-            'Content-Type': 'application/json',
-            },
+    // Function to fetch user profile from ServiceNow
+    async getProfile(email: string): Promise<ServiceNowProfile[]> {
+        const cacheKey = `profile:${email}`;
+        
+        // Check cache first
+        const cachedProfile = cache.get<ServiceNowProfile[]>(cacheKey);
+        if (cachedProfile) {
+            console.log('Profile fetched from cache:', cachedProfile);
+            return cachedProfile;
         }
-        );
-        console.log('Profile fetched successfully from ServiceNow:', response.data.result);
-        return response.data.result;
-    } catch (error) {
-        console.error('Error fetching profile:', error);
-        throw error;
-    }
-    }
 
-
+        try {
+            const response = await httpClient.get<ServiceNowResponse<ServiceNowProfile[]>>('/sys_user', {
+                sysparm_limit: 1,
+                sysparm_query: `email=${email}`,
+                sysparm_fields: this.PROFILE_FIELDS
+            });
+            
+            console.log('Profile fetched successfully from ServiceNow:', response.data.result);
+            
+            // Cache the profile
+            cache.set(cacheKey, response.data.result, this.PROFILE_CACHE_TTL);
+            
+            return response.data.result;
+        } catch (error) {
+            console.error('Error fetching profile:', error);
+            throw error;
+        }
+    }
 }
 
 export default new ProfilesApiService();
