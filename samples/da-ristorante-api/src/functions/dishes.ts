@@ -20,8 +20,10 @@ export async function dishes(
   // clone so that we're not modifying the original data
   let filteredDishes = [...data];
 
+  // Normalize name query once for better performance
   if (name) {
-    filteredDishes = filteredDishes.filter(dish => dish.name.toLowerCase().includes(name.toLowerCase()));
+    const normalizedName = name.toLowerCase();
+    filteredDishes = filteredDishes.filter(dish => dish.name.toLowerCase().includes(normalizedName));
   }
 
   if (course) {

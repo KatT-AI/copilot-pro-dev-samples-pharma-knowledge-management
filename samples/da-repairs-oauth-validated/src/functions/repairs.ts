@@ -83,9 +83,10 @@ export async function repairs(
   }
 
   // Filter the repair information by the assignedTo query parameter.
+  // Normalize query once outside the filter for better performance
+  const query = assignedTo.trim().toLowerCase();
   const repairs = repairRecords.filter((item) => {
     const fullName = item.assignedTo.toLowerCase();
-    const query = assignedTo.trim().toLowerCase();
     const [firstName, lastName] = fullName.split(" ");
     return fullName === query || firstName === query || lastName === query;
   });

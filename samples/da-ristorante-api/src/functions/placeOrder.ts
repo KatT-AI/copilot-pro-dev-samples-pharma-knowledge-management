@@ -39,7 +39,9 @@ export async function placeOrder(
 
   let totalPrice = 0;
   const orderDetails = order.dishes.map(orderedDish => {
-    const dish = data.find(d => d.name.toLowerCase().includes(orderedDish.name.toLowerCase()));
+    // Normalize dish name once for better performance
+    const normalizedOrderedDishName = orderedDish.name.toLowerCase();
+    const dish = data.find(d => d.name.toLowerCase().includes(normalizedOrderedDishName));
     if (dish) {
       totalPrice += dish.price * orderedDish.quantity;
       return {
